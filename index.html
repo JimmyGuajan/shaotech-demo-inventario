@@ -100,6 +100,7 @@ td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
 .muted{color:var(--gray);font-size:13px}
 .empty{padding:36px;text-align:center;color:var(--gray)}
 .mt{margin-top:16px}
+.pcard{cursor:pointer}.pcard:hover{border-color:var(--blue);box-shadow:0 0 0 2px #cfe2f6}
 @media(max-width:980px){.kpis{grid-template-columns:repeat(2,1fr)}.cols2,.cols2b{grid-template-columns:1fr}}
 @media(max-width:820px){
  .app{grid-template-columns:1fr}
@@ -206,11 +207,13 @@ const RAW=[
 ];
 const PROD=RAW.map(r=>({id:r[0],n:r[1],cat:r[2],u:r[3],p:r[4],iva:r[5],min:r[6],cad:r[8]}));
 const PBY=Object.fromEntries(PROD.map(p=>[p.id,p]));
+const DOC='Dra. Lucía Vera';
 const PACIENTES=[
- {id:'p1',n:'María Fernanda Pérez',ci:'0912345671',hc:'HC-100234',edad:'54 años'},
- {id:'p2',n:'Juan Carlos Andrade',ci:'0923456782',hc:'HC-100301',edad:'67 años'},
- {id:'p3',n:'Rosa Elena Torres',ci:'0934567893',hc:'HC-100412',edad:'41 años'},
- {id:'p4',n:'Luis Alberto Mora',ci:'0945678904',hc:'HC-100518',edad:'72 años'}];
+ {id:'p1',n:'María Fernanda Pérez',ci:'0912345671',hc:'HC-100234',edad:'54 años',serv:'HOSP 1',cama:'Habitación 104-A',dx:'Colecistitis aguda',medico:'Dra. Lucía Vera'},
+ {id:'p2',n:'Juan Carlos Andrade',ci:'0923456782',hc:'HC-100301',edad:'67 años',serv:'Quirófano',cama:'Quirófano 3',dx:'Hernia inguinal',medico:'Dra. Paula Ortiz'},
+ {id:'p3',n:'Rosa Elena Torres',ci:'0934567893',hc:'HC-100412',edad:'41 años',serv:'EMG',cama:'Observación 2',dx:'Dolor abdominal',medico:'Dra. Lucía Vera'},
+ {id:'p4',n:'Luis Alberto Mora',ci:'0945678904',hc:'HC-100518',edad:'72 años',serv:'HOSP 1',cama:'Habitación 108-B',dx:'Neumonía adquirida en comunidad',medico:'Dra. Lucía Vera'}];
+const ALT={m1:['m17','m2','m3'],m2:['m17','m3','m4'],m3:['m4','m2','m17'],m4:['m3','m2','m17'],m17:['m2','m3','m4']};
 const PAC=Object.fromEntries(PACIENTES.map(p=>[p.id,p]));
 const MEDICOS=['Dr. Carlos Mena','Dra. Lucía Vera','Dr. Andrés Salazar','Dra. Paula Ortiz'];
 const HOY='2026-11-05';
@@ -251,14 +254,14 @@ try{S=JSON.parse(localStorage.getItem(KEY)||'null')}catch(e){S=null}
 if(!S)S=seed();
 const save=()=>{try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}};
 let role=(()=>{try{return localStorage.getItem(KEY+'_role')||'Administrador'}catch(e){return 'Administrador'}})();
-let query='';let invSel=null;let fBod='todas',fCat='todas',fQ='';
+let query='';let selPac=null;let pendingProd='';let invSel=null;let fBod='todas',fCat='todas',fQ='';
 
 const ROLES={
- 'Médico':['panel','buscar','descargo'],
+ 'Médico':['pacientes','buscar'],
  'Bodega':['panel','buscar','inventario','descargo'],
  'Facturación':['panel','facturacion','reportes'],
  'Administrador':['panel','buscar','descargo','inventario','facturacion','reportes']};
-const MENU={panel:['▦','Panel'],buscar:['⌕','Buscar disponibilidad'],descargo:['✎','Descargo de insumos'],inventario:['▤','Inventario'],facturacion:['$','Facturación'],reportes:['▥','Reportes']};
+const MENU={pacientes:['☺','Mis pacientes'],panel:['▦','Panel'],buscar:['⌕','Buscar disponibilidad'],descargo:['✎','Descargo de insumos'],inventario:['▤','Inventario'],facturacion:['$','Facturación'],reportes:['▥','Reportes']};
 
 /* ===================== UTILIDADES ===================== */
 const $=s=>document.querySelector(s);
@@ -300,7 +303,7 @@ V.panel=()=>{
   return`
   <div class="hero"><div><h2>Un solo lugar para el stock de las 4 bodegas</h2>
   <p>El médico busca un producto, ve en qué bodega hay existencia, lo solicita en pantalla y todo queda listo para facturar al paciente. Prueba buscando <b>“aspirina”</b>.</p></div>
-  <button class="btn" data-go="buscar">Buscar “aspirina”</button></div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" data-role="Médico">Entrar como médico</button><button class="btn" data-role="Bodega">como bodega</button><button class="btn" data-role="Facturación">como facturación</button></div></div>
   <div class="grid kpis">
    <div class="card kpi"><div class="l">Productos activos</div><div class="v">${PROD.length}</div><div class="s">en ${BODEGAS.length} bodegas</div></div>
    <div class="card kpi"><div class="l">Valor del inventario</div><div class="v">${money(totalV)}</div><div class="s">a precio de costo (ficticio)</div></div>
@@ -321,6 +324,44 @@ V.panel=()=>{
   </table></div></div>`;
 };
 
+function bestBod(pid,qty,pref){
+  if(S.stock[pid][pref]>=qty)return pref;
+  let b=null,m=0;BODEGAS.forEach(x=>{const v=S.stock[pid][x.id];if(v>=qty&&v>m){m=v;b=x.id}});return b;
+}
+function findProd(name){const n=norm(name.trim());if(!n)return null;return PROD.find(x=>norm(x.n)===n)||PROD.find(x=>norm(x.n).includes(n))}
+function availHtml(name){
+  const p=findProd(name);if(!p)return name.trim()?'<div class="muted" style="margin-top:12px">No se encontró ese producto.</div>':'';
+  const chips=BODEGAS.map(b=>`<span style="margin-right:14px;white-space:nowrap"><span class="muted">${b.n.replace('Bodega ','')}</span> ${stockChip(S.stock[p.id][b.id])}</span>`).join('');
+  let msg='';
+  if(tot(p.id)>0)msg=`<div class="callout" style="margin:10px 0 0">Disponible: <b>${p.n}</b> (${num(tot(p.id))} en total). Se pedirá a la bodega que tenga existencia.</div>`;
+  else{const alt=(ALT[p.id]||[]).filter(i=>tot(i)>0).map(i=>PBY[i].n);
+   msg=`<div class="callout w" style="margin:10px 0 0">Sin existencia de <b>${p.n}</b>.${alt.length?' Alternativas con stock: <b>'+alt.join(', ')+'</b>.':' Consulte con farmacia.'}</div>`}
+  return`<div style="margin-top:12px">${chips}</div>${msg}`;
+}
+V.pacientes=()=>{
+  if(!selPac){
+    const mine=PACIENTES.filter(p=>role!=='Médico'||p.medico===DOC);
+    return`<div class="callout i">${role==='Médico'?`Sesión: <b>${DOC}</b>. `:''}Elige un paciente para indicar medicamentos o insumos. Verás la disponibilidad de las 4 bodegas al instante.</div>
+    <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(280px,1fr))">${mine.map(p=>`<div class="card pcard" data-pac="${p.id}"><b style="font-size:17px;color:var(--navy)">${p.n}</b><div class="muted" style="margin:4px 0 10px">${p.edad} · ${p.hc}</div><div>${p.dx}</div><div class="muted" style="margin-top:8px">${p.serv} · ${p.cama}</div><div style="margin-top:10px"><span class="badge b-blue">${S.descargos.filter(d=>d.pac===p.id&&d.estado==='Pendiente').length} pendiente(s)</span></div></div>`).join('')}</div>`;
+  }
+  const p=PAC[selPac];const ds=S.descargos.filter(d=>d.pac===p.id).slice().reverse();
+  const entregado=(S.cuentas[p.id]?S.cuentas[p.id].items:[]);
+  return`<button class="btn sec sm" data-pac="">← Mis pacientes</button>
+  <div class="card mt"><div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap"><div><h3 style="margin:0;font-size:20px">${p.n}</h3><div class="muted">${p.edad} · ${p.hc} · CI ${p.ci}</div></div>
+   <div style="text-align:right"><span class="badge b-blue">${p.serv} · ${p.cama}</span><div class="muted" style="margin-top:6px">Dx: ${p.dx}</div></div></div></div>
+  <div class="grid cols2b mt">
+   <div class="card"><h3>Indicar medicamento o insumo</h3>
+    <div class="addrow" style="margin-top:0"><input type="text" id="m-prod" list="plist" placeholder="Producto (ej. Aspirina)…" value="${pendingProd.replace(/"/g,'&quot;')}"><input type="number" id="m-qty" min="1" value="1"><button class="btn" id="m-add">Indicar</button></div>${draftDatalist()}
+    <div class="chips" style="margin:10px 0 0">${['Aspirina','Cefazolina','Ketorolaco','Jeringuilla 5 ml','Bisturí # 15'].map(c=>`<span class="chip" data-mq="${c}">${c}</span>`).join('')}</div>
+    <div id="m-avail">${availHtml(pendingProd)}</div>
+   </div>
+   <div class="card"><h3>Indicaciones de este paciente</h3>
+    ${ds.length?`<div class="tw"><table><tr><th>Detalle</th><th>Estado</th></tr>${ds.map(x=>`<tr><td>${x.items.map(i=>`${i.qty} × ${PBY[i.pid].n}`).join('<br>')}<div class="muted">${x.id} · desde ${BN[x.bod]}</div></td><td>${x.estado==='Entregado'?'<span class="badge b-ok">Entregado</span>':'<span class="badge b-warn">Esperando a bodega</span>'}</td></tr>`).join('')}</table></div>`:'<div class="empty">Aún no hay indicaciones.</div>'}
+    <div class="muted" style="margin-top:10px">${entregado.length} ítem(s) ya cargados a su cuenta para facturación.</div>
+   </div>
+  </div>`;
+};
+
 V.buscar=()=>{
   const q=norm(query.trim());
   const res=q?PROD.filter(p=>norm(p.n).includes(q)||norm(p.cat).includes(q)):[];
@@ -339,7 +380,7 @@ V.buscar=()=>{
   ${res.map(p=>`<tr><td><b>${p.n}</b><div class="muted">${p.cat} · ${p.u}</div></td>
    ${BODEGAS.map(b=>`<td class="n">${stockChip(S.stock[p.id][b.id])}</td>`).join('')}
    <td class="n"><b>${num(tot(p.id))}</b></td><td>${money(p.p)}</td>
-   <td>${tot(p.id)>0?`<button class="btn sm" data-use="${p.id}">Usar en descargo</button>`:'<span class="badge b-bad">Agotado</span>'}</td></tr>`).join('')}
+   <td>${tot(p.id)>0?`<button class="btn sm" data-use="${p.id}">${role==='Médico'?'Indicar a paciente':'Usar en descargo'}</button>`:'<span class="badge b-bad">Agotado</span>'}</td></tr>`).join('')}
   </table></div>`}</div>`;
 };
 
@@ -479,12 +520,14 @@ function go(r){route=r;if(location.hash!=='#'+r)location.hash=r;render();window.
 window.addEventListener('hashchange',()=>{const r=location.hash.slice(1);if(MENU[r]&&r!==route){route=r;render()}});
 
 $('#role').innerHTML=Object.keys(ROLES).map(r=>`<option ${r===role?'selected':''}>${r}</option>`).join('');
-$('#role').onchange=e=>{role=e.target.value;try{localStorage.setItem(KEY+'_role',role)}catch(_){}render()};
+function setRole(r){role=r;$('#role').value=r;try{localStorage.setItem(KEY+'_role',r)}catch(_){}selPac=null;pendingProd='';route=ROLES[r][0];location.hash=route;render();window.scrollTo(0,0)}
+$('#role').onchange=e=>setRole(e.target.value);
 $('#reset').onclick=()=>{S=seed();save();invSel=null;query='';toast('Demo restablecida a los datos originales.');go('panel')};
 $('#modal').addEventListener('click',e=>{if(e.target.id==='modal')closeModal()});
 
 document.addEventListener('input',e=>{
   if(e.target.id==='q'){query=e.target.value;const pos=e.target.selectionStart;render();const q=$('#q');q.focus();q.setSelectionRange(pos,pos)}
+  if(e.target.id==='m-prod'){pendingProd=e.target.value;$('#m-avail').innerHTML=availHtml(pendingProd)}
   if(e.target.id==='f-q'){fQ=e.target.value;const pos=e.target.selectionStart;render();const q=$('#f-q');q.focus();q.setSelectionRange(pos,pos)}
 });
 document.addEventListener('change',e=>{
@@ -497,10 +540,23 @@ document.addEventListener('change',e=>{
   if(id==='d-med'){S.draft.medico=e.target.value;save()}
 });
 document.addEventListener('click',e=>{
-  const t=e.target.closest('[data-go],[data-q],[data-use],[data-rm],[data-ok],[data-tr],[data-inv],#d-add,#d-send,#emit,#print');if(!t)return;
+  const t=e.target.closest('[data-pac],[data-mq],[data-role],#m-add,[data-go],[data-q],[data-use],[data-rm],[data-ok],[data-tr],[data-inv],#d-add,#d-send,#emit,#print');if(!t)return;
   const ds=t.dataset;
-  if(ds.go){if(ds.go==='buscar')query='aspirina';go(ds.go)}
+  if(ds.pac!==undefined){selPac=ds.pac||null;pendingProd='';render()}
+  else if(ds.mq){pendingProd=ds.mq;render()}
+  else if(ds.role){setRole(ds.role)}
+  else if(t.id==='m-add'){
+    const p=PAC[selPac];const prod=findProd($('#m-prod').value);const q=Math.max(1,parseInt($('#m-qty').value)||1);
+    if(!prod){toast('Elige un producto de la lista.',true);return}
+    const bod=bestBod(prod.id,q,SERV_BODEGA[p.serv]);
+    if(!bod){const alt=(ALT[prod.id]||[]).filter(i=>tot(i)>0).map(i=>PBY[i].n);toast('No hay stock suficiente de “'+prod.n+'” en ninguna bodega.'+(alt.length?' Alternativas: '+alt.join(', ')+'.':''),true);return}
+    const id='D-'+String(S.seq++).padStart(4,'0');
+    S.descargos.push({id,fecha:HOY,serv:p.serv,pac:p.id,medico:p.medico,bod,items:[{pid:prod.id,qty:q}],estado:'Pendiente'});
+    pendingProd='';save();toast('Indicación enviada a '+BN[bod]+(bod!==SERV_BODEGA[p.serv]?' (no había en la bodega del servicio)':'')+'. Bodega la verá para entregar.');render();
+  }
+  else if(ds.go){if(ds.go==='buscar')query='aspirina';go(ds.go)}
   else if(ds.q){query=ds.q;render()}
+  else if(ds.use&&role==='Médico'){pendingProd=PBY[ds.use].n;if(!selPac)toast('Elige un paciente para indicarle “'+pendingProd+'”.');go('pacientes')}
   else if(ds.use){const p=PBY[ds.use];S.draft.items.push({pid:p.id,qty:1});save();toast(`“${p.n}” agregado al descargo.`);go('descargo')}
   else if(ds.rm!==undefined){S.draft.items.splice(+ds.rm,1);save();render()}
   else if(ds.ok){entregar(ds.ok)}
